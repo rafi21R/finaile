@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>2-Player Cover Shooter — Dashboard</title>
+<style>
+  :root{
+    --bg1:#061018; --bg2:#071428; --card:#081624; --muted:#9fb0c6;
+    --p1:#4fc3ff; --p2:#ff6b8a; --accent:#ff9a57; --heal:#7ef2a1;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;color:#e6eef8;background:linear-gradient(180deg,var(--bg1),var(--bg2));}
+  .layout{max-width:1180px;margin:22px auto;display:grid;grid-template-columns:1fr 320px;gap:18px;padding:10px;}
+  .stage-card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:14px;padding:12px;box-shadow:0 8px 40px rgba(2,6,23,0.6);}
+  header h1{margin:0;font-size:18px}
+  .meta{color:var(--muted);font-size:13px;margin-top:6px}
+  canvas{display:block;border-radius:10px;background:linear-gradient(180deg,#0b1b2a,#061425);width:100%;height:680px}
+  .sidebar{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:14px;padding:12px;box-shadow:0 8px 40px rgba(2,6,23,0.6);height:680px;overflow:auto}
+  .pill{display:inline-block;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,0.03);font-weight:600}
+  .section{margin-top:12px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  .btn{padding:8px 10px;border-radius:10px;background:#0b1b2a;border:1px solid rgba(255,255,255,0.04);cursor:pointer;color:var(--muted)}
+  .btn.primary{background:linear-gradient(90deg,var(--accent),#ff7b50);color:#061018;border:0}
+  .stat{margin-top:8px;color:var(--muted);font-size:13px}
+  .footer{margin-top:18px;color:var(--muted);font-size:12px;text-align:center}
+  .legend{display:flex;gap:10px;margin-top:8px}
+  .dot{width:12px;height:12px;border-radius:3px}
+  /* small responsive */
+  @media (max-width:980px){.layout{grid-template-columns:1fr;}.sidebar{height:auto;}}
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="stage-card">
+    <header>
+      <h1>2-Player Cover Shooter</h1>
+      <div class="meta">WASD + Space (Player 1) • Arrow Keys + Enter (Player 2). First to win is declared champion. Avoid bullets & use covers!</div>
+    </header>
+
+    <div style="height:12px"></div>
+    <canvas id="game" width="1200" height="680"></canvas>
+  </div>
+
+  <aside class="sidebar">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div class="pill" id="scoreP1">P1: 0</div>
+        <div style="margin-top:8px" class="pill" id="scoreP2">P2: 0</div>
+      </div>
+      <div>
+        <button class="btn" id="btnRestart">Restart</button>
+        <button class="btn primary" id="btnRespawn">Respawn</button>
+      </div>
+    </div>
+
+    <div class="section stat">
+      <div><strong>Player 1</strong> — <span style="color:var(--p1)">Blue</span></div>
+      <div class="meta">W A S D to move, Space to shoot. Health shown on HUD.</div>
+    </div>
+
+    <div class="section stat">
+      <div><strong>Player 2</strong> — <span style="color:var(--p2)">Pink</span></div>
+      <div class="meta">Arrow keys to move, Enter to shoot.</div>
+    </div>
+
+    <div class="section">
+      <div class="meta">Legend</div>
+      <div class="legend">
+        <div style="display:flex;align-items:center;gap:8px"><div class="dot" style="background:var(--p1)"></div><div class="small">P1</div></div>
+        <div style="display:flex;align-items:center;gap:8px"><div class="dot" style="background:var(--p2)"></div><div class="small">P2</div></div>
+        <div style="display:flex;align-items:center;gap:8px"><div class="dot" style="background:#21343f"></div><div class="small">Cover</div></div>
+        <div style="display:flex;align-items:center;gap:8px"><div class="dot" style="background:var(--heal)"></div><div class="small">Medkit</div></div>
+      </div>
+    </div>
+
+    <div class="section stat">
+      <div class="meta">Win target: First to <strong id="winTarget">5</strong> points.</div>
+      <div class="meta">Heal pickups appear every 10s and restore health.</div>
+    </div>
+
+    <div class="footer">Built with Canvas • Single-file demo • No server required</div>
+  </aside>
+</div>
+
+<script>
+/*
+  2-Player Cover Shooter (single-file)
+  - Player1: WASD + Space
+  - Player2: Arrows + Enter
+  - Covers, bullets, blood particles, medkits (healing), score + winner declaration
+  - Hit & respawn logic, winner overlay
+*/
+
+// ----- Config -----
+const WIN_SCORE = 5;
+const PLAYER_SIZE = 36;
+const MAX_HP = 100;
+const FIRE_COOLDOWN = 300; // ms
+const BULLET_SPEED = 900; // px/sec
+const HEAL_AMOUNT = 40;
+const HEAL_SPAWN_INTERVAL = 10000; // ms
+const RESPAWN_TIME = 1400; // ms
+
+// ----- Canvas -----
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// ----- UI elements -----
+const scoreP1El = document.getElementById('scoreP1');
+const scoreP2El = document.getElementById('scoreP2');
+const btnRestart = document.getElementById('btnRestart');
+const btnRespawn = document.getElementById('btnRespawn');
+const winTargetEl = document.getElementById('winTarget');
+winTargetEl.textContent = WIN_SCORE;
+
+// ----- Game state -----
+const covers = [
+  {x:200, y:220, w:260, h:28},
+  {x:680, y:120, w:36, h:260},
+  {x:420, y:420, w:300, h:40},
+  {x:60,  y:520, w:160, h:36},
+  {x:960, y:300, w:160, h:36}
+];
+
+let medkits = []; // {x,y,ttl}
+let bullets = []; // {x,y,vx,vy,owner,created}
+let particles = []; // blood particles
+let lastHealSpawn = performance.now();
+
+const players = {
+  p1: {id:'p1', x:200, y:120, ang:0, score:0, hp:MAX_HP, alive:true, lastShot:0, color:'#4fc3ff'},
+  p2: {id:'p2', x:980, y:520, ang:Math.PI, score:0, hp:MAX_HP, alive:true, lastShot:0, color:'#ff6b8a'}
+};
+
+let keys = {};
+window.addEventListener('keydown', e => { keys[e.code]=true; if(e.code==='Space' || e.code==='Enter') e.preventDefault(); });
+window.addEventListener('keyup', e => keys[e.code]=false);
+
+// mouse (for aiming P1 optionally)
+const mouse = {x:W/2, y:H/2};
+canvas.addEventListener('mousemove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
+  mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
+});
+
+// ----- Helpers -----
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function rand(min,max){ return Math.random()*(max-min)+min; }
+function rectOverlap(a,b){ return !(a.x+a.w < b.x || a.x > b.x + b.w || a.y + a.h < b.y || a.y > b.y + b.h); }
+
+// ----- Game mechanics -----
+function spawnMedkit(){
+  // spawn in free space (not overlapping covers or players)
+  for (let tries=0; tries<40; tries++){
+    const x = rand(60, W-60);
+    const y = rand(60, H-60);
+    const mk = {x,y,ttl: 8000 + Math.random()*4000, created: performance.now()};
+    const box = {x: mk.x-14, y: mk.y-14, w:28, h:28};
+    let ok = true;
+    for (const c of covers) if (rectOverlap(box, c)) { ok=false; break; }
+    for (const id in players) {
+      const p = players[id];
+      if (Math.hypot(p.x - x, p.y - y) < 80) { ok=false; break; }
+    }
+    if (ok) { medkits.push(mk); break; }
+  }
+}
+
+function tryShoot(player){
+  const now = performance.now();
+  if (now - player.lastShot < FIRE_COOLDOWN) return;
+  if (!player.alive) return;
+  player.lastShot = now;
+  // bullet angle: facing other player (P1: aim at mouse, P2: aim at other)
+  let ang = player.ang;
+  if (player.id === 'p1') {
+    ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  } else {
+    // aim toward P1
+    ang = Math.atan2(players.p1.y - player.y, players.p1.x - player.x);
+  }
+  const bx = player.x + Math.cos(ang) * (PLAYER_SIZE/2 + 8);
+  const by = player.y + Math.sin(ang) * (PLAYER_SIZE/2 + 8);
+  bullets.push({x:bx, y:by, vx:Math.cos(ang)*BULLET_SPEED, vy:Math.sin(ang)*BULLET_SPEED, owner:player.id, created:now});
+}
+
+function spawnBlood(x,y,dir,amt=12){
+  for (let i=0;i<amt;i++){
+    const sp = {
+      x,y,
+      vx: Math.cos(dir) * rand(40,220) + (Math.random()-0.5)*200,
+      vy: Math.sin(dir) * rand(40,220) + (Math.random()-0.5)*200,
+      t0: performance.now(),
+      life: rand(500,1200),
+      size: rand(2,4)
+    };
+    particles.push(sp);
+  }
+}
+
+// ----- Update loop -----
+let lastFrame = performance.now();
+let winner = null;
+function update(dt){
+  if (winner) return;
+
+  // player movement P1 (WASD)
+  const p1 = players.p1, p2 = players.p2;
+  if (p1.alive) {
+    let dx=0, dy=0;
+    if (keys['KeyW']) dy -= 1;
+    if (keys['KeyS']) dy += 1;
+    if (keys['KeyA']) dx -= 1;
+    if (keys['KeyD']) dx += 1;
+    if (dx || dy) {
+      const len = Math.hypot(dx,dy) || 1;
+      const speed = 240;
+      const nx = p1.x + (dx/len) * speed * dt;
+      const ny = p1.y + (dy/len) * speed * dt;
+      const box = {x: nx-PLAYER_SIZE/2, y: ny-PLAYER_SIZE/2, w:PLAYER_SIZE, h:PLAYER_SIZE};
+      let blocked = false;
+      for (const c of covers) if (rectOverlap(box, c)) { blocked=true; break; }
+      if (!blocked) { p1.x = clamp(nx,20,W-20); p1.y = clamp(ny,20,H-20); }
+    }
+    p1.ang = Math.atan2(mouse.y - p1.y, mouse.x - p1.x);
+    if (keys['Space']) tryShoot(p1);
+  }
+
+  // player movement P2 (Arrows)
+  if (p2.alive) {
+    let dx=0, dy=0;
+    if (keys['ArrowUp']) dy -= 1;
+    if (keys['ArrowDown']) dy += 1;
+    if (keys['ArrowLeft']) dx -= 1;
+    if (keys['ArrowRight']) dx += 1;
+    if (dx || dy) {
+      const len = Math.hypot(dx,dy) || 1;
+      const speed = 220;
+      const nx = p2.x + (dx/len) * speed * dt;
+      const ny = p2.y + (dy/len) * speed * dt;
+      const box = {x: nx-PLAYER_SIZE/2, y: ny-PLAYER_SIZE/2, w:PLAYER_SIZE, h:PLAYER_SIZE};
+      let blocked = false;
+      for (const c of covers) if (rectOverlap(box, c)) { blocked=true; break; }
+      if (!blocked) { p2.x = clamp(nx,20,W-20); p2.y = clamp(ny,20,H-20); }
+    }
+    // face p1
+    p2.ang = Math.atan2(p1.y - p2.y, p1.x - p2.x);
+    if (keys['Enter']) tryShoot(p2);
+  }
+
+  // bullets movement
+  for (let i = bullets.length-1; i>=0; i--){
+    const b = bullets[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    // out of bounds
+    if (b.x < -20 || b.x > W+20 || b.y < -20 || b.y > H+20) { bullets.splice(i,1); continue; }
+    // hit cover
+    let hitCover = false;
+    for (const c of covers) {
+      if (b.x > c.x && b.x < c.x + c.w && b.y > c.y && b.y < c.y + c.h) { hitCover = true; break; }
+    }
+    if (hitCover) { bullets.splice(i,1); continue; }
+    // hit players
+    for (const id in players){
+      if (id === b.owner) continue;
+      const pl = players[id];
+      if (!pl.alive) continue;
+      const dx = b.x - pl.x, dy = b.y - pl.y;
+      if (dx*dx + dy*dy <= (PLAYER_SIZE*0.6)*(PLAYER_SIZE*0.6)){
+        // apply damage
+        pl.hp -= 34;
+        spawnBlood(b.x, b.y, Math.atan2(b.vy, b.vx) + Math.PI, 10);
+        if (pl.hp <= 0){
+          pl.alive = false;
+          players[b.owner].score += 1;
+          // check winner
+          if (players[b.owner].score >= WIN_SCORE) {
+            winner = b.owner;
+            setTimeout(()=> showWinner(winner), 300);
+          }
+          // respawn victim after delay
+          setTimeout(()=> {
+            if (pl) {
+              pl.hp = MAX_HP;
+              pl.alive = true;
+              pl.x = rand(80, W-80);
+              pl.y = rand(80, H-80);
+            }
+          }, RESPAWN_TIME);
+        }
+        bullets.splice(i,1);
+        break;
+      }
+    }
+  }
+
+  // medkits lifetime & collection
+  const now = performance.now();
+  if (now - lastHealSpawn > HEAL_SPAWN_INTERVAL) {
+    lastHealSpawn = now;
+    spawnMedkit();
+  }
+  for (let i = medkits.length-1; i>=0; i--){
+    const m = medkits[i];
+    if (now - m.created > m.ttl) { medkits.splice(i,1); continue; }
+    // collect by players
+    for (const id in players) {
+      const p = players[id];
+      if (!p.alive) continue;
+      if (Math.hypot(p.x - m.x, p.y - m.y) < PLAYER_SIZE) {
+        p.hp = clamp(p.hp + HEAL_AMOUNT, 0, MAX_HP);
+        // small heal burst
+        for (let k=0;k<8;k++){
+          particles.push({x:m.x,y:m.y,vx:rand(-80,80),vy:rand(-220,-40),t0:now,life:400+Math.random()*400,size:2+Math.random()*3, heal:true});
+        }
+        medkits.splice(i,1);
+        break;
+      }
+    }
+  }
+
+  // particles update
+  for (let i = particles.length-1; i>=0; i--){
+    const p = particles[i];
+    const age = now - p.t0;
+    if (age > p.life) { particles.splice(i,1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += (p.heal ? 400 : 900) * dt; // gravity for blood/heal different
+  }
+
+  // UI update
+  scoreP1El.textContent = `P1: ${players.p1.score}  HP:${Math.max(0,Math.round(players.p1.hp))}`;
+  scoreP2El.textContent = `P2: ${players.p2.score}  HP:${Math.max(0,Math.round(players.p2.hp))}`;
+}
+
+// ----- Render -----
+function render(){
+  // background subtle animated stars / parallax
+  ctx.fillStyle = '#061425';
+  ctx.fillRect(0,0,W,H);
+
+  // subtle grid lines
+  ctx.save();
+  ctx.globalAlpha = 0.04;
+  ctx.fillStyle = '#183041';
+  for (let gx=0; gx<W; gx+=64) ctx.fillRect(gx, 0, 1, H);
+  for (let gy=0; gy<H; gy+=64) ctx.fillRect(0, gy, W, 1);
+  ctx.restore();
+
+  // covers draw
+  for (const c of covers){
+    roundedRect(ctx, c.x, c.y, c.w, c.h, 6);
+    ctx.fillStyle = '#16282d';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.stroke();
+  }
+
+  // medkits
+  for (const m of medkits){
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(126,242,161,0.95)';
+    ctx.fillRect(-12, -12, 24, 24);
+    ctx.fillStyle = '#051814';
+    ctx.fillRect(-4, -8, 8, 16);
+    ctx.fillRect(-8, -4, 16, 8);
+    ctx.restore();
+  }
+
+  // bullets
+  for (const b of bullets){
+    ctx.beginPath();
+    ctx.fillStyle = b.owner === 'p1' ? '#ffd166' : '#ff8b94';
+    ctx.arc(b.x, b.y, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // players
+  for (const id in players){
+    const p = players[id];
+    // shadow
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y + PLAYER_SIZE/2 + 6, PLAYER_SIZE/1.8, PLAYER_SIZE/3.2, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fill();
+
+    // body rotated
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.ang || 0);
+    ctx.fillStyle = p.color;
+    if (!p.alive) ctx.globalAlpha = 0.28;
+    roundedRect(ctx, -PLAYER_SIZE/2, -PLAYER_SIZE/2, PLAYER_SIZE, PLAYER_SIZE, 6);
+    ctx.fill();
+    // gun stub
+    ctx.fillStyle = '#07121a';
+    ctx.fillRect(4, -6, PLAYER_SIZE/1.7, 12);
+    ctx.restore();
+
+    // HP bar
+    const hpPct = clamp(p.hp / MAX_HP, 0, 1);
+    const barW = 84;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(p.x - barW/2, p.y - PLAYER_SIZE/2 - 14, barW, 8);
+    ctx.fillStyle = 'rgba(255,80,90,0.95)';
+    if (id === 'p1') ctx.fillStyle = '#4fd1c5';
+    if (id === 'p2') ctx.fillStyle = '#ff9fb0';
+    ctx.fillRect(p.x - barW/2, p.y - PLAYER_SIZE/2 - 14, barW * hpPct, 8);
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    ctx.strokeRect(p.x - barW/2, p.y - PLAYER_SIZE/2 - 14, barW, 8);
+
+    // name & score
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '12px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText((id === 'p1' ? 'P1' : 'P2') + ' • ' + p.score, p.x, p.y + PLAYER_SIZE/2 + 18);
+  }
+
+  // particles
+  for (const q of particles){
+    const age = performance.now() - q.t0;
+    const t = age / q.life;
+    ctx.globalAlpha = 1 - t;
+    ctx.fillStyle = q.heal ? 'rgba(126,242,161,0.95)' : '#ff3b3b';
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, q.size, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // HUD
+  const me = players.p1; // local main HUD show P1 HP
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(12, 12, 240, 48);
+  ctx.fillStyle = '#cbd5e1';
+  ctx.font = '14px Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`P1: ${players.p1.score}  HP: ${Math.max(0,Math.round(players.p1.hp))}`, 22, 34);
+  ctx.fillText(`P2: ${players.p2.score}  HP: ${Math.max(0,Math.round(players.p2.hp))}`, 140, 34);
+
+  // winner overlay
+  if (winner) {
+    ctx.fillStyle = 'rgba(2,6,23,0.6)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = '48px Inter, sans-serif';
+    ctx.fillText((winner === 'p1' ? 'Player 1' : 'Player 2') + ' WINS!', W/2, H/2 - 10);
+    ctx.font = '20px Inter, sans-serif';
+    ctx.fillText('Click Restart to play again', W/2, H/2 + 30);
+  }
+}
+
+// rounded rect helper
+function roundedRect(ctx,x,y,w,h,r){
+  if (r === undefined) r = 6;
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+// ----- Winner display -----
+function showWinner(id){
+  winner = id;
+  // subtle confetti burst
+  for (let i=0;i<120;i++){
+    particles.push({x:W/2 + rand(-120,120), y:H/2 + rand(-40,40), vx:rand(-400,400), vy:rand(-600,-60), t0:performance.now(), life:800+Math.random()*1200, size:2+Math.random()*4, heal:true});
+  }
+}
+
+// ----- Game loop -----
+let last = performance.now();
+function loop(now){
+  now = now || performance.now();
+  const dt = Math.min(40, now - last) / 1000;
+  last = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ----- Input bindings for safety (prevent scroll) -----
+window.addEventListener('keydown', (e) => {
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+});
+
+// ----- Controls: Restart & Respawn -----
+btnRestart.addEventListener('click', () => {
+  // reset state
+  for (const id in players) {
+    players[id].score = 0;
+    players[id].hp = MAX_HP;
+    players[id].alive = true;
+    players[id].x = id === 'p1' ? 200 : 980;
+    players[id].y = id === 'p1' ? 120 : 520;
+  }
+  bullets = [];
+  medkits = [];
+  particles = [];
+  winner = null;
+});
+btnRespawn.addEventListener('click', () => {
+  for (const id in players) {
+    players[id].hp = MAX_HP;
+    players[id].alive = true;
+  }
+  winner = null;
+});
+
+// ----- Utility random -----
+function rand(a,b){ return Math.random()*(b-a)+a; }
+
+// ----- Start with a medkit spawn soon -----
+setTimeout(spawnMedkit, 1500);
+
+</script>
+</body>
+</html>
