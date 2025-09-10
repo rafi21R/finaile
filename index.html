@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>2D Multiplayer Shooter</title>
+<style>
+  body { margin:0; background:#111; color:#fff; font-family:sans-serif; }
+  #game { display:block; margin:auto; background:#222; }
+  #score { position:fixed; top:10px; left:10px; font-size:18px; }
+</style>
+</head>
+<body>
+<div id="score">Loading...</div>
+<canvas id="game" width="800" height="500"></canvas>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
+const socket=io();
+let roomId=location.hash.slice(1)||"default";
+socket.emit("joinRoom",roomId);
+
+let me={x:100,y:100,score:0},players={};
+let keys={};
+document.addEventListener("keydown",e=>keys[e.code]=true);
+document.addEventListener("keyup",e=>keys[e.code]=false);
+
+function update(){
+  if(keys["KeyW"]) me.y-=3;
+  if(keys["KeyS"]) me.y+=3;
+  if(keys["KeyA"]) me.x-=3;
+  if(keys["KeyD"]) me.x+=3;
+  socket.emit("move",{roomId,data:me});
+}
+document.addEventListener("keydown",e=>{
+  if(e.code==="Space"){
+    for(let id in players){
+      let p=players[id];
+      if(Math.hypot(me.x-p.x,me.y-p.y)<40){
+        socket.emit("shoot",{roomId,targetId:id});
+      }
+    }
+  }
+});
+
+socket.on("state",state=>{
+  players=state;
+  if(players[socket.id]) me=players[socket.id];
+});
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for(let id in players){
+    let p=players[id];
+    ctx.fillStyle=id===socket.id?"lime":"red";
+    ctx.fillRect(p.x,p.y,20,20);
+    ctx.fillStyle="white";
+    ctx.fillText("Score:"+p.score,p.x,p.y-5);
+  }
+}
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>
